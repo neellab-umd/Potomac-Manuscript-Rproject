@@ -1,0 +1,435 @@
+---
+title: "Potomac Study Area Map"
+author: "Maile Neel"
+date: today
+  
+format: 
+  html: 
+    title-block-banner: true
+    theme: sandstone
+  
+execute: 
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: load_packages
+#| warning: false
+#| include: false
+
+if (!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse,
+               here,
+               magrittr,
+               ggthemes,
+               cowplot,
+               sf,
+               lemon,
+               gtable,
+               ggrepel,
+               lwgeom,
+               ggspatial,
+               update = FALSE)
+
+```
+
+# Figure 1.
+
+Load sampling location data
+
+```{r}
+#| label: load_point_data
+#| 
+popcentroids<-read_csv(here::here("data",
+                "PR.Pop.Centroids.UTMs.csv"))
+
+```
+
+To convert to an sf object we specify the variables containing the coordinates. We also have to provide a CRS. I typically work with Universal Transverse Mercator (UTM) coordinates because they on on a grid that has equal-sized cells, and they are in units of meters.  However, because we need to plot a larer scale map of North America for context, I need to use Lat Long here. We are not measuring anything, so Lat Long will be o.k. for the figure. 
+
+I am specifying latitude longitude based on a the WGS84 datum.
+
+```{r}
+#| label: convert_point_data to sf
+```
+
+
+```{r}
+popcentroids.sf.LatLong = sf::st_as_sf(popcentroids, 
+                                      coords = c("Longitude", "Latitude"), 
+                                      crs = "EPSG:4269")
+```
+
+Check out the sf object
+
+```{r}
+
+popcentroids.sf.LatLong
+
+```
+
+Set the bounding boxes for the maps.  The local box is a bit larger than the minimum and maximum x and y extent of the sampling points. I got their bounding box using st_bbox(popcentroids.sf.LatLong) and then I kept changing the coordinates and checking what the plot looked like until I got the extent I wanted.
+
+The global bounding box was chosen to show the east coast including Canada to set the spatial context for the study area.
+
+```{r}
+#| label: set bounding box
+#-78.570465
+#-76.762046
+local.bbox.for.sf<- c(xmin = -78.590, ymin = 38.119906, xmax =  -76.789, ymax=40.29) 
+
+global.bbox.for.sf<- c(xmin=-87.83,ymin=24.677,xmax=-66.27,ymax=47.945)
+
+```
+
+In case it is needed in the future, a similar local bounding box using UTM coordinates in the EPSG:26918 CRS would be
+utm.bbox.for.sf<- c(xmin = 186806.5, ymin=4220502, xmax=350000.3, ymax=4450050) 
+
+Load in water shape file, which is the Chesapeake and Potomac file that was hand digitized to ensure the accuracy of the shoreline.  Filter for just the Potomac River.
+
+```{r}
+#| label: read_local_water_vector_data
+#| warning: false
+
+water<- st_read("./shapefiles/CB.PR.Digitized.MN.2024.shp") %>% 
+sf::st_make_valid() %>% 
+dplyr::filter(Water=="Potomac") %>% 
+sf::st_transform(4269)
+```
+
+Crop the water polygon to the bounding box.
+
+```{r}
+#| label: crop_local_water_to_bounding_box
+water_crop <-water %>% 
+  dplyr::filter(Water=="Potomac") %>% 
+  sf::st_crop(local.bbox.for.sf)
+
+#plot(water_crop[1])
+```
+
+Now read in a shapefile with political boundaries for Canada, the US, and Mexico that we will use for context. This shapefile comes from [The Commission for Environmental Cooperation (CEC)](http://www.cec.org/north-american-environmental-atlas/political-boundaries-2021/).  It is a bit cludgey to manually download the shapefile, but this is one of the best quality free sources I have found that includes all of North America. 
+
+I switch off spherical geometry and force sf to use planar geometry.  Not that I am a flat earther, but we are not calculating anything, so the planar geometry will not hurt and the spherical geometry throws errors.
+
+
+```{r}
+#| label: read_state_boundaries
+#| warning: false
+
+boundaries<- sf::st_read("./shapefiles/boundaries_p_2021_v3.shp") #%>% 
+#st_make_valid()
+
+sf::sf_use_s2(FALSE)
+```
+
+```{r}
+#| label: local_crop_state_boundaries
+#| warning: false
+boundaries_local_crop <-boundaries %>% 
+  dplyr::filter(STATEABB %in% c("US-WV","US-VA","US-MD","US-DC","US-OH")) %>% 
+  sf::st_transform(4269) %>% 
+  sf::st_crop(local.bbox.for.sf)
+
+```
+Get labels for states for the local map.
+
+```{r} 
+#| label: label_local_points
+
+#label_local_points <- sf::st_point_on_surface(local_boundaries_crop)
+
+#Get automatic points within each polygon and set the name to use as a label
+#label_local_coords <- as.data.frame(sf::st_coordinates(label_local_points))
+#label_local_coords$NAME <- label_local_points$NAME_En
+
+#Write out coordinates and finagle them until the labels look good.  Then read back in the modified locations.
+#write_csv(label_coords, "./shapefiles/label_coords.csv")
+
+label_local_coords<-readr::read_csv("./shapefiles/label_local_coords.csv")
+
+#plot(boundaries_local_crop[1])
+```
+
+```{r} 
+#| label: label_global_points
+
+label_global_coords<-read_csv("./shapefiles/context_label_coords.csv")
+
+```
+
+
+```{r}
+#| label: boundary_box_for_state_boundaries
+#| warning: false
+
+boundaries_global_crop <-boundaries %>% 
+  #filter(STATEABB %in% c("US-WV","US-VA","US-MD","US-DC","US-OH")) %>% 
+  sf::st_transform(4269) %>% 
+  sf::st_crop(global.bbox.for.sf) 
+
+
+#plot(boundaries_global_crop[1])
+```
+
+Create a boundary map at the country level
+
+```{r}
+#| label: global_crop_of_state_boundaries
+#| warning: false
+
+country_boundaries_global_crop <- boundaries_global_crop %>% 
+  dplyr::group_by(COUNTRY) %>% 
+       dplyr::summarise()
+
+```
+
+Create local map of sites in the study area
+
+```{r}
+#| label: fig-local_ggplot
+#| fig-cap: Potomac with vector map. 
+
+study.area <- ggplot() +
+  geom_sf(data = boundaries_local_crop, fill="white")+
+  geom_text(data = label_local_coords, aes(Longitude, Latitude, label = NAME), size=3)+
+  geom_sf(data = water_crop, fill = "lightgray", color = "lightgray") +
+  geom_sf(data = popcentroids.sf.LatLong,
+          aes(shape = Tide, color = Source), size=2.5)+ 
+  geom_text_repel(data = popcentroids.sf.LatLong,
+    aes(label = OrderPop, geometry = geometry),
+    stat = "sf_coordinates", min.segment.length = 0.2, size=2.5,
+    max.overlaps = 16)+
+  scale_x_continuous(expand = expansion(0)) +
+  scale_y_continuous(expand = expansion(0)) +
+  scale_color_grey(start =0, end = .55) +
+  ggspatial::annotation_scale(
+    location = "br",
+    width_hint = 0.3,
+    height = unit(0.11, "cm"),
+    pad_x = unit(0.35, "in"),
+    pad_y = unit(0.06, "in"),
+    text_cex = 0.5,
+    text_pad = unit(0.02, "cm")
+  ) +
+  ggspatial::annotation_north_arrow(
+    location = "br",
+    which_north = "true",
+    pad_x = unit(0.76, "in"),
+    pad_y = unit(0.13, "in"),
+    height = unit(.5, "cm"),
+    width = unit(.6, "cm"),
+    style = north_arrow_fancy_orienteering
+  ) +
+  theme_map() +
+  theme(
+    legend.position = "inside", 
+    legend.position.inside = c(0.75, 0.9),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 6),
+    legend.spacing.x = unit(.05, "cm"),
+    legend.spacing.y = unit(.1, "cm"),
+    legend.key.width = unit(.01, "cm"),
+    legend.key.height = unit(.29, "cm"),
+   # legend.box.just = "center",
+    panel.border = element_rect(fill = NA, colour = "black",linewidth=1),
+    axis.text = element_blank()
+)
+   
+
+```
+
+Context Map
+
+```{r}
+#| label: fig-global_ggplot
+#| fig-cap: inset with vector map. 
+#| warning: false
+
+context <- ggplot() +
+  geom_sf(data = boundaries_global_crop,
+    fill = "white",
+    color = "gray")+
+  geom_sf(data = country_boundaries_global_crop, fill = NA, color="black") +
+  geom_text(data = filter(label_global_coords,Category=="Ocean"), 
+            aes(Longitude, Latitude,label = stringr::str_wrap(NAME, 5)), 
+            size=2, fontface='italic', lineheight = .8)+
+  geom_text(data = filter(label_global_coords,Category=="Country"), 
+            aes(Longitude, Latitude, label = stringr::str_wrap(NAME, 5)), 
+            size=2,lineheight = .8)+
+  #geom_text(data =filter(label_global_coords,Category=="Province"), 
+  #          aes(Longitude, Latitude, label = stringr::str_wrap(NAME, 5)), 
+  #          size=1.1,lineheight = .8)+
+  geom_sf(data = popcentroids.sf.LatLong,
+          aes(color = Tide), size=.05, show.legend = FALSE)+ 
+  scale_x_continuous(expand = expansion(0)) +
+  scale_y_continuous(expand = expansion(0)) +
+  scale_color_grey(start = 0, end = .55) +
+  geom_rect(aes(
+    xmin = -78.570465, 
+    ymin = 38.109906, 
+    xmax =  -76.762046, 
+    ymax= 40.187438),
+    fill = NA,
+    colour = "black",
+    linewidth = 0.3,
+    show.legend=FALSE)+
+  ggspatial::annotation_scale(
+    location = "br",
+    width_hint = 0.3,
+    height = unit(0.1, "cm"),
+    pad_x = unit(0.05, "in"),
+    pad_y = unit(0.06, "in"),
+    text_cex = 0.5,
+    text_pad = unit(0.05, "cm")
+  ) +
+  theme_map() +
+  theme(axis.text = element_blank(),
+        panel.background = element_rect(fill = "lightgray"),
+        panel.border = element_rect(colour = "black", linewidth = 1,fill=NA)
+  )
+
+```
+
+
+Combine the study area map and the inset context map using cowplot.
+
+```{r}
+#| label: fig-combined_ggplot
+#| fig-cap: inset and global map.
+
+cowplot::ggdraw() +
+  draw_plot(study.area) +
+  draw_plot(context,
+    height = 0.55,
+    x = -0.215,
+    y = 0.01
+  )
+
+ggsave(here("figures","Figure1.png"),width = 15, height = 15, units = "cm", dpi=350)
+
+```
+#Figure 3.
+
+Read in frequency data for MLGs and pivot the data so all the MLG names are in one column and the associated data are in matching column so that we can facet on MLG name.
+
+```{r}
+#| label: wrangle_mlg_frequencies
+
+MLG_freqs <- read_csv(here::here("data","mlg.count.and.freq.by.pop.csv")) %>% 
+  dplyr::left_join(popcentroids, by = "NewPop") %>% 
+  dplyr::filter(Tide == "Nontidal") %>% 
+  pivot_longer(cols=FR_199:FR_346, names_to = "MLG.names", values_to = "Freqs", ) %>% 
+  mutate(MLG.names = stringr::str_replace(MLG.names,"FR_", "MLG "))
+  
+
+```
+
+Convert to spatial object.
+
+```{r}
+#| label: convert_ mlg_frequencies_to_sf
+
+MLG_freqs.sf.LatLong <- sf::st_as_sf(MLG_freqs, 
+                                      coords = c("Longitude", "Latitude"), 
+                                      crs = "EPSG:4269")
+
+```
+
+Generate the bounding box - I ended up not cropping the input shapefile with this but rather controlled the extent withing ggplot using coord_sf()
+
+```{r}
+MLG_Freq.bounding.box <- c(xmin = -78.5, ymin = 38.985224, xmax = -77.189, ymax = 39.73)
+
+```
+
+Use this function from stack overflow to put the legend in one of the unused spaces in the facet wrap.
+
+```{r}
+
+shift_legend2 <- function(p) {
+  # ...
+  # to grob
+  gp <- ggplotGrob(p) 
+  facet.panels <- grep("^panel", gp[["layout"]][["name"]])
+  empty.facet.panels <- sapply(facet.panels, function(i) "zeroGrob" %in% class(gp[["grobs"]][[i]]))
+  empty.facet.panels <- facet.panels[empty.facet.panels]
+
+  # establish name of empty panels
+  empty.facet.panels <- gp[["layout"]][empty.facet.panels, ]
+  names <- empty.facet.panels$name
+  # example of names:
+  #[1] "panel-3-2" "panel-3-3"
+
+# now we just need a simple call to reposition the legend
+  reposition_legend(p, 'center', panel=names)
+}
+
+```
+
+
+Generate facet-wrapped plots of all frequencies of all multi-site MLGs with scale bar in only one facet.
+
+```{r}
+#| label: fig-mlg_freq
+#| fig-cap: Frequency of multisite MLGs in the non-tidal Potomac River. 
+
+MLG.Plot<-ggplot() +
+  geom_sf(data = water_crop, fill = "gray", color = "gray") +
+  geom_sf(data=popcentroids.sf.LatLong, shape= 1, size=.8, fill=NA)+
+  geom_sf(data = filter(MLG_freqs.sf.LatLong, Freqs>0),
+          aes(size = Freqs))+
+  geom_text(data = MLG_freqs.sf.LatLong,
+            aes(label = MLG.names), 
+            x = Inf, y = Inf, 
+            hjust = 3.5, vjust = 4.15,
+            size=2.5)+
+  facet_wrap(.~MLG.names) +
+  coord_sf(xlim = c(-78.58, -77.189), ylim = c(38.985224, 39.73), expand = FALSE)+ 
+    ggspatial::annotation_scale(
+    location = "bl",
+    width_hint = 0.4,
+    height = unit(0.1, "cm"),
+    pad_x = unit(0.35, "in"),
+    pad_y = unit(0.06, "in"),
+    text_cex = 0.5,
+    text_pad = unit(0.05, "cm"), 
+    data = subset(MLG_freqs.sf.LatLong, MLG.names == "MLG 346")) +
+ scale_size_area(max_size = 4)+
+  scale_x_continuous(expand = expansion(0)) +
+  scale_y_continuous(expand = expansion(0)) +
+  scale_color_grey(start =0, end = .55) +
+  theme_map() +
+  labs(size = "Frequency")+
+  theme(
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 6),
+    legend.spacing.x = unit(.05, "cm"),
+    legend.key.width = unit(.01, "cm"),
+    legend.key.height = unit(.29, "cm"),
+    strip.background = element_blank(),
+    strip.text = element_blank(),
+    panel.spacing.x = unit(.15, "lines"),
+    axis.text = element_blank())
+
+```
+
+Shift the legend
+
+```{r}
+#| label: fig-mlg_freq_better_legend
+#| fig-cap: Frequency of multisite MLGs in the non-tidal Potomac River with better legend. 
+#| 
+MLG.Plot.better.legend <- shift_legend2(MLG.Plot)
+```
+
+Save the final plot out.
+
+```{r}
+#| label: save_figure_3
+
+ggsave(here("figures","Figure3.png"), plot = MLG.Plot.better.legend,
+       width = 15, height = 10, units = "cm", dpi=350)
+```
+
